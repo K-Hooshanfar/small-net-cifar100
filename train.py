@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 import datetime
 import torch.cuda
+import matplotlib.pyplot as plt
 
 
 CIFAR100_TRAIN_MEAN = (0.5070751592371323, 0.48654887331495095, 0.4409178433670343)
@@ -52,6 +53,7 @@ def training():
         epoch + 1, total_loss/length, optimizer.param_groups[0]['lr'], float(correct)/ total_sample
     ))
     fepoch.flush()
+    return correct,total_sample,total_loss/length
 
 
 def evaluating():
@@ -87,7 +89,7 @@ def evaluating():
         epoch + 1, total_loss / length, optimizer.param_groups[0]['lr'], acc
     ))
     feval.flush()
-    return acc, total_loss/length, inference_time
+    return acc, total_loss/length, inference_time,total_loss
 
 
 if __name__ == '__main__':
@@ -96,7 +98,7 @@ if __name__ == '__main__':
     parser.add_argument("-net", default='mobilenet', help='net type')
     parser.add_argument("-b", default=128, type=int, help='batch size')
     parser.add_argument("-lr", default=0.1, help='initial learning rate', type=int)
-    parser.add_argument("-e", default=200, help='EPOCH', type=int)
+    parser.add_argument("-e", default=10, help='EPOCH', type=int)
     parser.add_argument("-optim", default="SGD", help='optimizer')
     args = parser.parse_args()
 
@@ -112,8 +114,8 @@ if __name__ == '__main__':
         transforms.Normalize(mean=CIFAR100_TRAIN_MEAN, std=CIFAR100_TRAIN_STD)
     ])
 
-    traindata = torchvision.datasets.CIFAR100(root='./data', train=True, download=False, transform=transform_train)
-    testdata = torchvision.datasets.CIFAR100(root='./data', train=False, download=False, transform=transform_test)
+    traindata = torchvision.datasets.CIFAR100(root='./data', train=True, download=True, transform=transform_train)
+    testdata = torchvision.datasets.CIFAR100(root='./data', train=False, download=True, transform=transform_test)
 
     trainloader = DataLoader(traindata, batch_size=args.b, shuffle=True, num_workers=2)
     testloader = DataLoader(testdata, batch_size=args.b, shuffle=True, num_workers=2)
@@ -156,32 +158,67 @@ if __name__ == '__main__':
     # train and eval
     best_acc = 0
     total_time = 0
+
+    train_losses = []
+    val_losses = []
+    train_accuracies = []
+    val_accuracies = []
+
     with open(os.path.join(checkpoint_path, 'EpochLog.txt'), 'w') as fepoch:
         with open(os.path.join(checkpoint_path, 'StepLog.txt'), 'w') as fstep:
             with open(os.path.join(checkpoint_path, 'EvalLog.txt'), 'w') as feval:
                 with open(os.path.join(checkpoint_path, 'Best.txt'), 'w') as fbest:
                     print("start training")
                     for epoch in range(args.e):
-                        training()
+                        correct,total_sample,averagelosstrain=training()
                         print("evaluating")
-                        accuracy, averageloss, inference_time = evaluating()
+                        accuracy, averageloss, inference_time,total_loss = evaluating()
+
+                        # Append values for plotting
+                        train_losses.append(averagelosstrain)
+                        val_losses.append(averageloss)
+                        train_accuracies.append(float(correct) / total_sample)
+                        val_accuracies.append(accuracy)
 
                         scheduler.step()
 
                         print("saving regular")
                         torch.save(net.state_dict(), os.path.join(checkpoint_path, 'regularParam.pth'))
 
-                        if accuracy > best_acc:
-                            print("saving best")
-                            torch.save(net.state_dict(), os.path.join(checkpoint_path, 'bestParam.pth'))
+                        # if accuracy > best_acc:
+                        print("saving best")
+                        torch.save(net.state_dict(), os.path.join(checkpoint_path, 'bestParam.pth'))
 
-                            fbest.write("Epoch:{}\t Loss:{:.3f}\t lr:{:.5f}\t acc:{:.3%}\n".format(
+                        fbest.write("Epoch:{}\t Loss:{:.3f}\t lr:{:.5f}\t acc:{:.3%}\n".format(
                                 epoch + 1, averageloss, optimizer.param_groups[0]['lr'], accuracy
                             ))
-                            fbest.flush()
-                            best_acc = accuracy
+                        fbest.flush()
+                        best_acc = accuracy
                         # print(inference_time)
                         total_time += (inference_time/len(testloader.dataset))
+    
+    # Plotting
+    plt.figure(figsize=(12, 4))
+
+    plt.subplot(1, 2, 1)
+    plt.plot(train_losses, label='Train Loss')
+    plt.plot(val_losses, label='Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.savefig(os.path.join(checkpoint_path, 'loss_plot.png'))
+
+    plt.subplot(1, 2, 2)
+    plt.plot(train_accuracies, label='Train Accuracy')
+    plt.plot(val_accuracies, label='Validation Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.savefig(os.path.join(checkpoint_path, 'accuracy_plot.png'))
+
+    plt.tight_layout()
+    plt.show()
+
     print(total_time)
     print(total_time / args.e)
 
