@@ -58,30 +58,19 @@ def training():
 
 def evaluating():
     net.eval()
-    length = len(testloader)
-    total_sample = len(testloader.dataset)
+    length = len(valloader)
+    total_sample = len(valloader.dataset)
     total_loss = 0
     correct = 0
-    inference_time = 0
-    for step, (x, y) in enumerate(testloader):
+    for step, (x, y) in enumerate(valloader):
         x = x.cuda()
         y = y.cuda()
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-
-        start.record()
+        
         output = net(x)
         _, predict = torch.max(output, 1)
-        end.record()
-
-        # Waits for everything to finish running
         torch.cuda.synchronize()
-        inference_time += start.elapsed_time(end)  # milliseconds
-
         loss = loss_function(output, y)
-
         total_loss += loss.item()
-
         correct += (predict == y).sum()
 
     acc = float(correct) / total_sample
@@ -89,16 +78,16 @@ def evaluating():
         epoch + 1, total_loss / length, optimizer.param_groups[0]['lr'], acc
     ))
     feval.flush()
-    return acc, total_loss/length, inference_time,total_loss
+    return acc, total_loss/length,total_loss
 
 
 if __name__ == '__main__':
     # arguments from command line
     parser = argparse.ArgumentParser()
-    parser.add_argument("-net", default='mobilenet', help='net type')
+    parser.add_argument("-net", default='efficientnetb0', help='net type')
     parser.add_argument("-b", default=128, type=int, help='batch size')
     parser.add_argument("-lr", default=0.1, help='initial learning rate', type=int)
-    parser.add_argument("-e", default=10, help='EPOCH', type=int)
+    parser.add_argument("-e", default=200, help='EPOCH', type=int)
     parser.add_argument("-optim", default="SGD", help='optimizer')
     args = parser.parse_args()
 
@@ -109,31 +98,29 @@ if __name__ == '__main__':
         transforms.ToTensor(),
         transforms.Normalize(mean=CIFAR100_TRAIN_MEAN, std=CIFAR100_TRAIN_STD)
     ])
-    transform_test = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean=CIFAR100_TRAIN_MEAN, std=CIFAR100_TRAIN_STD)
-    ])
+    # transform_test = transforms.Compose([
+    #     transforms.ToTensor(),
+    #     transforms.Normalize(mean=CIFAR100_TRAIN_MEAN, std=CIFAR100_TRAIN_STD)
+    # ])
 
     traindata = torchvision.datasets.CIFAR100(root='./data', train=True, download=True, transform=transform_train)
-    testdata = torchvision.datasets.CIFAR100(root='./data', train=False, download=True, transform=transform_test)
 
-    trainloader = DataLoader(traindata, batch_size=args.b, shuffle=True, num_workers=2)
-    testloader = DataLoader(testdata, batch_size=args.b, shuffle=True, num_workers=2)
+    # Split the training data into train and validation subsets
+    train_size = int(0.8 * len(traindata))
+    val_size = len(traindata) - train_size
+    train_subset, val_subset = torch.utils.data.random_split(traindata, [train_size, val_size])
+
+    trainloader = DataLoader(train_subset, batch_size=args.b, shuffle=True, num_workers=2)
+    valloader = DataLoader(val_subset, batch_size=args.b, shuffle=False, num_workers=2)
+
+    # traindata = torchvision.datasets.CIFAR100(root='./data', train=True, download=True, transform=transform_train)
+    # testdata = torchvision.datasets.CIFAR100(root='./data', train=False, download=True, transform=transform_test)
+
+    # trainloader = DataLoader(traindata, batch_size=args.b, shuffle=True, num_workers=2)
+    # testloader = DataLoader(testdata, batch_size=args.b, shuffle=True, num_workers=2)
 
     # define net
-    if args.net == 'mobilenet':
-        from models.mobilenet import mobilenet
-        net = mobilenet(1, 100).cuda()
-    elif args.net == 'mobilenetv2':
-        from models.mobilenetv2 import mobilenetv2
-        net = mobilenetv2(1, 100).cuda()
-    elif args.net == 'shufflenet':
-        from models.shufflenet import shufflenet
-        net = shufflenet([4, 8, 4], 3, 1, 100).cuda()
-    elif args.net == 'shufflenetv2':
-        from models.shufflenetv2 import shufflenetv2
-        net = shufflenetv2(100, 1).cuda()
-    elif args.net == 'efficientnetb0':
+    if args.net == 'efficientnetb0':
         from models.efficientnet import efficientnet
         print("loading net")
         net = efficientnet(1, 1, 100, bn_momentum=0.9).cuda()
@@ -172,7 +159,7 @@ if __name__ == '__main__':
                     for epoch in range(args.e):
                         correct,total_sample,averagelosstrain=training()
                         print("evaluating")
-                        accuracy, averageloss, inference_time,total_loss = evaluating()
+                        accuracy, averageloss,total_loss = evaluating()
 
                         # Append values for plotting
                         train_losses.append(averagelosstrain)
@@ -194,8 +181,6 @@ if __name__ == '__main__':
                             ))
                         fbest.flush()
                         best_acc = accuracy
-                        # print(inference_time)
-                        total_time += (inference_time/len(testloader.dataset))
     
     # Plotting
     plt.figure(figsize=(12, 4))
@@ -218,9 +203,6 @@ if __name__ == '__main__':
 
     plt.tight_layout()
     plt.show()
-
-    print(total_time)
-    print(total_time / args.e)
 
 
 
