@@ -1,3 +1,4 @@
+# Import necessary libraries
 import torch.nn as nn
 import torch
 import os
@@ -11,61 +12,76 @@ import datetime
 import torch.cuda
 import matplotlib.pyplot as plt
 
-
+# CIFAR-100 dataset mean and standard deviation for normalization
 CIFAR100_TRAIN_MEAN = (0.5070751592371323, 0.48654887331495095, 0.4409178433670343)
 CIFAR100_TRAIN_STD = (0.2673342858792401, 0.2564384629170883, 0.27615047132568404)
+
+# Checkpoint path for saving model and logs
 CHECK_POINT_PATH = "./checkpoint"
+
+# Learning rate milestones for scheduler
 MILESTONES = [60, 120, 160]
 
 
 def training():
+    # Set the model to train mode
     net.train()
     length = len(trainloader)
     total_sample = len(trainloader.dataset)
     total_loss = 0
     correct = 0
+
+    # Iterate through batches in the training data
     for step, (x, y) in enumerate(trainloader):
         x = x.cuda()
         y = y.cuda()
 
+        # Zero gradients, perform forward and backward passes, and update weights
         optimizer.zero_grad()
-
         output = net(x)
         loss = loss_function(output, y)
         loss.backward()
         optimizer.step()
 
+        # Update training statistics
         total_loss += loss.item()
         _, predict = torch.max(output, 1)
         correct += (predict == y).sum()
 
+        # Write step information to the step log file
         fstep.write("Epoch:{}\t Step:{}\t TrainedSample:{}\t TotalSample:{}\t Loss:{:.3f}\n".format(
                 epoch+1, step+1, step*args.b + len(y), total_sample, loss.item()
             ))
         fstep.flush()
 
+        # Print training progress every 10 steps
         if step % 10 == 0:
             print("Epoch:{}\t Step:{}\t TrainedSample:{}\t TotalSample:{}\t Loss:{:.3f}".format(
                 epoch+1, step+1, step*args.b + len(y), total_sample, loss.item()
             ))
 
+    # Write epoch information to the epoch log file
     fepoch.write("Epoch:{}\t Loss:{:.3f}\t lr:{:.5f}\t acc:{:.3%}\n".format(
         epoch + 1, total_loss/length, optimizer.param_groups[0]['lr'], float(correct)/ total_sample
     ))
     fepoch.flush()
-    return correct,total_sample,total_loss/length
+    return correct, total_sample, total_loss/length
 
 
 def evaluating():
+    # Set the model to evaluation mode
     net.eval()
     length = len(valloader)
     total_sample = len(valloader.dataset)
     total_loss = 0
     correct = 0
+
+    # Iterate through batches in the validation data
     for step, (x, y) in enumerate(valloader):
         x = x.cuda()
         y = y.cuda()
-        
+
+        # Perform forward pass without gradient computation
         output = net(x)
         _, predict = torch.max(output, 1)
         torch.cuda.synchronize()
@@ -73,16 +89,17 @@ def evaluating():
         total_loss += loss.item()
         correct += (predict == y).sum()
 
+    # Calculate accuracy and write evaluation information to the eval log file
     acc = float(correct) / total_sample
     feval.write("Epoch:{}\t Loss:{:.3f}\t lr:{:.5f}\t acc:{:.3%}\n".format(
         epoch + 1, total_loss / length, optimizer.param_groups[0]['lr'], acc
     ))
     feval.flush()
-    return acc, total_loss/length,total_loss
+    return acc, total_loss/length, total_loss
 
 
 if __name__ == '__main__':
-    # arguments from command line
+    # Parse command line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("-net", default='efficientnetb0', help='net type')
     parser.add_argument("-b", default=128, type=int, help='batch size')
@@ -91,35 +108,23 @@ if __name__ == '__main__':
     parser.add_argument("-optim", default="SGD", help='optimizer')
     args = parser.parse_args()
 
-    # data processing
+    # Data preprocessing
     transform_train = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize(mean=CIFAR100_TRAIN_MEAN, std=CIFAR100_TRAIN_STD)
     ])
-    # transform_test = transforms.Compose([
-    #     transforms.ToTensor(),
-    #     transforms.Normalize(mean=CIFAR100_TRAIN_MEAN, std=CIFAR100_TRAIN_STD)
-    # ])
 
+    # Load CIFAR-100 dataset and split into train and validation subsets
     traindata = torchvision.datasets.CIFAR100(root='./data', train=True, download=True, transform=transform_train)
-
-    # Split the training data into train and validation subsets
     train_size = int(0.8 * len(traindata))
     val_size = len(traindata) - train_size
     train_subset, val_subset = torch.utils.data.random_split(traindata, [train_size, val_size])
-
     trainloader = DataLoader(train_subset, batch_size=args.b, shuffle=True, num_workers=2)
     valloader = DataLoader(val_subset, batch_size=args.b, shuffle=False, num_workers=2)
 
-    # traindata = torchvision.datasets.CIFAR100(root='./data', train=True, download=True, transform=transform_train)
-    # testdata = torchvision.datasets.CIFAR100(root='./data', train=False, download=True, transform=transform_test)
-
-    # trainloader = DataLoader(traindata, batch_size=args.b, shuffle=True, num_workers=2)
-    # testloader = DataLoader(testdata, batch_size=args.b, shuffle=True, num_workers=2)
-
-    # define net
+    # Define neural network architecture
     if args.net == 'efficientnetb0':
         from models.efficientnet import efficientnet
         print("loading net")
@@ -129,7 +134,7 @@ if __name__ == '__main__':
         print('We don\'t support this net.')
         sys.exit()
 
-    # define loss, optimizer, lr_scheduler and checkpoint path
+    # Define loss, optimizer, learning rate scheduler, and checkpoint path
     print("defining training")
     loss_function = nn.CrossEntropyLoss()
     if args.optim == "SGD":
@@ -142,7 +147,8 @@ if __name__ == '__main__':
     if not os.path.exists(checkpoint_path):
         os.makedirs(checkpoint_path)
     print("defining finish")
-    # train and eval
+
+    # Train and evaluate the model
     best_acc = 0
     total_time = 0
 
@@ -157,9 +163,9 @@ if __name__ == '__main__':
                 with open(os.path.join(checkpoint_path, 'Best.txt'), 'w') as fbest:
                     print("start training")
                     for epoch in range(args.e):
-                        correct,total_sample,averagelosstrain=training()
+                        correct, total_sample, averagelosstrain = training()
                         print("evaluating")
-                        accuracy, averageloss,total_loss = evaluating()
+                        accuracy, averageloss, total_loss = evaluating()
 
                         # Append values for plotting
                         train_losses.append(averagelosstrain)
@@ -203,14 +209,3 @@ if __name__ == '__main__':
 
     plt.tight_layout()
     plt.show()
-
-
-
-
-
-
-
-
-
-
-
